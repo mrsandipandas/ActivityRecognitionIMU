@@ -14,11 +14,13 @@
 
 #### Quartenion operations
 - Average
-```Q = [a_1*q_1 a_2*q_2 ... a_n*q_n]
-- a_1 + a_2 + ..... + a_n = 1
+```
+Q = [a_1*q_1 a_2*q_2 ... a_n*q_n]
+a_1 + a_2 + ..... + a_n = 1
 ```
 - Difference between two quartenions
-```2*arccos|A.B|
+```
+2*arccos|A.B|
 ```
 
 #### Activity recognizition
