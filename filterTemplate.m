@@ -29,7 +29,7 @@ window = 100;
 orientation_del_history = zeros(window,1);
 orientation_old = [0 0 0 0]';
 activity = ["Stationary" "Walking" "Running"];
-thershold = [1e-3       4e-3];
+thershold = [5e-3       20e-3];
 initialized = 0;
 % false = Phone calculated Q
 % true = Developed algo calculated Q
@@ -146,7 +146,7 @@ while server.status()  % Repeat while data is available
                 set(get(gca, 'title'), 'string', activity(argmax))
 
             end
-            del = 0.5*acos(abs(dot(orientation_old,val)));
+            del = 2*acos(abs(dot(orientation_old,val)));
             orientation_old = val;
             orientation_del_history(1+rem(counter, window)) = real(del);
     end
