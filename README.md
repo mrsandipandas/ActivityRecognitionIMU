@@ -18,8 +18,8 @@
 - a_1 + a_2 + ..... + a_n = 1
 ```
 - Difference between two quartenions
-![equation](https://latex.codecogs.com/gif.latex?\theta&space;=&space;2&space;\arccos&space;\left(|&space;\langle&space;p,&space;q&space;\rangle&space;|\right))
-where, ![equation](https://latex.codecogs.com/gif.latex?\langle&space;p,q&space;\rangle&space;=&space;p_1q_1&space;&plus;&space;p_2q_2&space;&plus;&space;p_3q_3&space;&plus;&space;p_4q_4)
+```2*arccos|A.B|
+```
 
 #### Activity recognizition
 - Used thersholding
