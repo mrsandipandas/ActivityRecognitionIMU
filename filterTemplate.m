@@ -31,8 +31,8 @@ orientation_old = [0 0 0 0]';
 activity = ["Stationary" "Walking" "Running"];
 thershold = [5e-3       20e-3];
 initialized = 0;
-% false = Phone calculated Q
-% true = Developed algo calculated Q
+% true = Phone calculated Q, provided by android
+% false = Developed algo calculated Q
 orientation_type = true; 
 
 % Current filter state.
