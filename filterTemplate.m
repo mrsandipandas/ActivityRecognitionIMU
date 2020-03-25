@@ -33,7 +33,9 @@ thershold = [5e-3       20e-3];
 initialized = 0;
 % true = Phone calculated Q, provided by android
 % false = Developed algo calculated Q
-orientation_type = true; 
+orientation_type = true;
+offline = true;
+data_size = 0;
 
 % Current filter state.
 x = [1; 0; 0 ;0];
@@ -49,19 +51,27 @@ meas = struct('t', zeros(1, 0),...
     'gyr', zeros(3, 0),...
     'mag', zeros(3, 0),...
     'orient', zeros(4, 0));
+
+
+
 try
     %% Create data link
     server = StreamSensorDataReader(3400);
     % Makes sure to resources are returned.
     sentinel = onCleanup(@() server.stop());
-    
-    server.start();  % Start data reception.
+    if offline
+        record = load('data.mat');
+        data_size = size(record.sample,1);
+    else
+        server.start();  % Start data reception.
+    end
 catch e
     fprintf(['Unsuccessful connecting to client!\n' ...
         'Make sure to start streaming from the phone *after* '...
         'running this function!']);
     return;
 end
+
 
 % Used for visualization.
 figure(1);
@@ -71,11 +81,15 @@ googleView = [];
 counter = 0;  % Used to throttle the displayed frame rate.
 
 %% Filter loop
-while server.status()  % Repeat while data is available
+while server.status() || (counter < data_size) % Repeat while data is available
     % Get the next measurement set, assume all measurements
     % within the next 5 ms are concurrent (suitable for sampling
     % in 100Hz).
-    data = server.getNext(5);
+    if offline
+        data = record.sample(counter+1,:);
+    else
+        data = server.getNext(5);
+    end
     
     if isnan(data(1))  % No new data received
         continue;
@@ -130,25 +144,25 @@ while server.status()  % Repeat while data is available
             plot(t, 0);
             initialized = 1;
         end
-            if counter > 0 && rem(counter, window) == 0     
-                del_avg = (1.0/window)*sum(orientation_del_history);
-                ax = gca(); % get handle of current axes;
-                line = get(ax, 'Children'); % get handle to line object
-                line.XData = [line.XData t];
-                line.YData = [line.YData del_avg];
-                
-                % Majority voting
-                stationary = sum(orientation_del_history <= thershold(1), 'all');
-                walk = sum(orientation_del_history > thershold(1) & orientation_del_history < thershold(2), 'all');
-                run = window - (stationary + walk);
-                category = [stationary walk run];
-                [~, argmax] = max(category);
-                set(get(gca, 'title'), 'string', activity(argmax))
-
-            end
-            del = 2*acos(abs(dot(orientation_old,val)));
-            orientation_old = val;
-            orientation_del_history(1+rem(counter, window)) = real(del);
+        if counter > 0 && rem(counter, window) == 0
+            del_avg = (1.0/window)*sum(orientation_del_history);
+            ax = gca(); % get handle of current axes;
+            line = get(ax, 'Children'); % get handle to line object
+            line.XData = [line.XData t];
+            line.YData = [line.YData del_avg];
+            
+            % Majority voting
+            stationary = sum(orientation_del_history <= thershold(1), 'all');
+            walk = sum(orientation_del_history > thershold(1) & orientation_del_history < thershold(2), 'all');
+            run = window - (stationary + walk);
+            category = [stationary walk run];
+            [~, argmax] = max(category);
+            set(get(gca, 'title'), 'string', activity(argmax))
+            
+        end
+        del = 2*acos(abs(dot(orientation_old,val)));
+        orientation_old = val;
+        orientation_del_history(1+rem(counter, window)) = real(del);
     end
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     
