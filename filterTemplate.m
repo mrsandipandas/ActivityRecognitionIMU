@@ -25,23 +25,69 @@ import('se.hendeby.sensordata.*');  % Used to receive data.
 t0 = [];  % Initial time (initialize on first data received)
 nx = 4;
 % Add your filter settings here.
-window = 100;
+window = 100; % No. of historical points for activity calulation
 orientation_del_history = zeros(window,1);
 orientation_old = [0 0 0 0]';
 activity = ["Stationary" "Walking" "Running"];
 thershold = [5e-3       20e-3];
 initialized = 0;
+
 % true = Phone calculated Q, provided by android
 % false = Developed algo calculated Q
 orientation_type = true;
-offline = true;
+
+% Offline settings without camera recorded data
+offline = false;
 data_size = 0;
 
-% Current filter state.
+%% Camera for VINS
+try
+    % Get the plugin connector from here Home->Env->Add-Ons
+    % https://www.mathworks.com/matlabcentral/fileexchange/63319-android-mobile-camera-connector
+    
+    % true|false = Use|Stop camera
+    camera = true;
+    
+    % Show one frame per 'cam_window' frame streamed
+    cam_window = 100;
+    
+    % integrated = Display in one window
+    % float = Display as a seperate window
+    % None = No display but use camera features for calculations
+    camera_view = 'integrated';
+    
+    % 1 = Default view
+    % 2 = Activity view
+    % 3 = Camera View in the main window
+    plot_size = 2;
+    
+    % Change the IP based on IP display of the Webcam app
+    % https://ip-webcam.appspot.com/
+    camera_url = ('http://192.168.1.215:8080/shot.jpg?rnd=350264');
+    if camera
+        if strcmp(camera_view,'float')
+            video=vision.VideoPlayer();  
+        elseif strcmp(camera_view,'integrated')
+            plot_size = 3;
+            cam_handle = imshow(imread(camera_url), 'XData',[1 12], 'YData',[1 3], 'Parent', subplot(plot_size, 2, [5,6]));
+        else
+            fprintf('Activated camera stream in background!\n');
+        end
+    else
+        fprintf('Not using camera!\n');
+    end
+catch e
+    fprintf(['Unsuccessful connecting to IP Cam!\n' ...
+        'Make sure to start streaming from the phone *before*\n'...
+        'running this function and activate stream in background.\n'...
+        'Or, simply turn off camera usage using camera = flase flag!\n']);
+    return;
+end
+%% Current filter state.
 x = [1; 0; 0 ;0];
 P = eye(nx, nx);
 
-% Saved filter states.
+%% Saved filter states.
 xhat = struct('t', zeros(1, 0),...
     'x', zeros(nx, 0),...
     'P', zeros(nx, nx, 0));
@@ -75,7 +121,7 @@ end
 
 % Used for visualization.
 figure(1);
-subplot(2, 2, 1);
+subplot(plot_size, 2, 1);
 ownView = OrientationView('Own filter', gca);  % Used for visualization.
 googleView = [];
 counter = 0;  % Used to throttle the displayed frame rate.
@@ -115,6 +161,13 @@ while server.status() || (counter < data_size) % Repeat while data is available
         % Do something
     end
     
+    if camera && (counter > 0 && rem(counter, cam_window) == 0) 
+        img = imread(camera_url);
+        if ~any(isnan(img))  % Camera image are available.
+            % Do something
+        end
+    end
+    
     orientation = data(1, 18:21)';  % Google's orientation estimate.
     
     % Visualize result
@@ -123,7 +176,7 @@ while server.status() || (counter < data_size) % Repeat while data is available
         title(ownView, 'OWN', 'FontSize', 16);
         if ~any(isnan(orientation))
             if isempty(googleView)
-                subplot(2, 2, 2);
+                subplot(plot_size, 2, 2);
                 % Used for visualization.
                 googleView = OrientationView('Google filter', gca);
             end
@@ -138,8 +191,9 @@ while server.status() || (counter < data_size) % Repeat while data is available
     else
         val = x(1:4)';
     end
+    
     if ~any(isnan(val))
-        subplot(2, 2, [3,4]);
+        subplot(plot_size, 2, [3,4]);
         if initialized == 0
             plot(t, 0);
             initialized = 1;
@@ -163,6 +217,18 @@ while server.status() || (counter < data_size) % Repeat while data is available
         del = 2*acos(abs(dot(orientation_old,val)));
         orientation_old = val;
         orientation_del_history(1+rem(counter, window)) = real(del);
+        
+        if camera && (counter > 0 && rem(counter, cam_window) == 0)                       
+            if strcmp(camera_view,'float')
+                step(video,img);
+            elseif strcmp(camera_view,'integrated')
+                subplot(plot_size, 2, [5,6]);
+                set(cam_handle,'CData', img);
+                drawnow;
+            else
+                fprintf('Activated camera stream in background!\n');
+            end
+        end
     end
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     
