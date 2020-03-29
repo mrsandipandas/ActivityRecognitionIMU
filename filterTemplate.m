@@ -45,7 +45,7 @@ window = 100; % No. of historical points for activity calulation
 orientation_del_history = zeros(window,1);
 orientation_old = [0 0 0 0]';
 activity = ["Stationary" "Walking" "Running"];
-thershold = [3.5e-3       16e-3];
+thershold = [0.15          1.0];
 initialized = 0;
 
 % true = Phone calculated Q, provided by android
@@ -218,7 +218,8 @@ while server.status() || (counter < data_size) % Repeat while data is available
     if orientation_type 
         val = orientation;
     else
-        val = x(1:4)'; % Self-calculated orientation
+        
+        val = x(1:4, 1)'; % Self-calculated orientation
     end
     
     if ~any(isnan(val))
@@ -244,7 +245,13 @@ while server.status() || (counter < data_size) % Repeat while data is available
             set(get(gca, 'title'), 'string', activity(argmax))
             
         end
-        del = real(2*acos(abs(dot(orientation_old,val))));
+        if ~any(orientation_old(:))
+            del = real(2*acos(val(1)));
+        else
+            Q_del = quatmultiply(quatconj(val), orientation_old);
+            del = real(2*acosd(Q_del(1)));
+        end
+        
         orientation_old = val;
         
         if camera && (counter > 0 && rem(counter, cam_window) == 0)                       
