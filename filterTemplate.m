@@ -30,6 +30,8 @@ t0 = [];  % Initial time (initialize on first data received)
 nx = 4;
 % Add your filter settings here.
 % Samsung Note 10+ Södertälje
+Pos = [0 0 0]';
+
 acc_base = [-0.1102 0.1214 9.7468]';
 cov_acc = diag([.08438e-03 .08831e-03 2.50e-3]); % [m/s^2]
 
@@ -42,11 +44,10 @@ cov_mag = diag([0.1389 0.10001 0.1852]);
 alpha = 0.01;
 
 window = 100; % No. of historical points for activity calulation
-orientation_del_history = zeros(window,1);
 orientation_old = [0 0 0 0]';
 activity = ["Stationary" "Walking" "Running"];
 thershold = [0.15          1.0];
-initialized = 0;
+activity_initialized = 0;
 
 % true = Phone calculated Q, provided by android
 % false = Developed algo calculated Q
@@ -64,28 +65,32 @@ try
     % true|false = Use|Stop camera
     camera = false;
     
+    % 2 = Default view
+    % 4 = Activity view
+    % 6 = 3D Position view
+    % 8 = Camera View in the main window
+    plot_size = 6;
+    
     % Show one frame per 'cam_window' frame streamed
     cam_window = 100;
     
     % integrated = Display in one window
     % float = Display as a seperate window
     % None = No display but use camera features for calculations
-    camera_view = 'integrated';
+    camera_view = 'None';
     
-    % 1 = Default view
-    % 2 = Activity view
-    % 3 = Camera View in the main window
-    plot_size = 2;
+    
     
     % Change the IP based on IP display of the Webcam app
     % https://ip-webcam.appspot.com/
     camera_url = ('http://192.168.1.215:8080/shot.jpg?rnd=350264');
     if camera
         if strcmp(camera_view,'float')
-            video=vision.VideoPlayer();  
+            video=vision.VideoPlayer();
         elseif strcmp(camera_view,'integrated')
-            plot_size = 3;
-            cam_handle = imshow(imread(camera_url), 'XData',[1 12], 'YData',[1 3], 'Parent', subplot(plot_size, 2, [5,6]));
+            plot_size = 8;
+            % 'XData',[1 12], 'YData',[1 3] Sets the size of the image
+            cam_handle = imshow(imread(camera_url), 'XData',[1 12], 'YData',[1 3], 'Parent', subplot(plot_size, 2, [13 14 15 16]));
         else
             fprintf('Activated camera stream in background!\n');
         end
@@ -113,7 +118,8 @@ meas = struct('t', zeros(1, 0),...
     'gyr', zeros(3, 1),...
     'mag', zeros(3, 1),...
     'orient', zeros(4, 1),...
-    'orient_del', zeros(1, 0));
+    'orient_del', zeros(1, 0),...
+    'Pos', zeros(3, 1));
 
 try
     %% Create data link
@@ -136,7 +142,17 @@ end
 
 % Used for visualization.
 figure(1);
-subplot(plot_size, 2, 1);
+subplot(plot_size, 2, [9 10 11 12]);
+postion_graph = plot3(Pos(1), Pos(2), Pos(3),'-b', Pos(1), Pos(2), Pos(3), '-or','MarkerSize',10,'MarkerFaceColor','r');
+% xlim([-2 2])
+% ylim([-2 2])
+% zlim([-2 2])
+xlabel('Position X')
+ylabel('Position Y')
+zlabel('Position Z')
+grid on
+
+subplot(plot_size, 2, [1 3]);
 ownView = OrientationView('Own filter', gca);  % Used for visualization.
 googleView = [];
 counter = 0;  % Used to throttle the displayed frame rate.
@@ -183,14 +199,14 @@ while server.status() || (counter < data_size) % Repeat while data is available
     if ~any(isnan(mag))  % Mag measurements are available.
         % AR-filter to account for that the magnitude of m0 might drift
         mag_norm = (1-alpha)*mag_norm + alpha*norm(mag);
-
+        
         % If magnitude of measurement is too large, skip update step
-        if 32<mag_norm && mag_norm<56 % Thresholds for magnetic field 
+        if 32<mag_norm && mag_norm<56 % Thresholds for magnetic field
             [x, P] = update_mag(x, P, mag, mag_base, cov_mag); % Update state estimate
         end
     end
     
-    if camera && (counter > 0 && rem(counter, cam_window) == 0) 
+    if camera && (counter > 0 && rem(counter, cam_window) == 0)
         img = imread(camera_url);
         if ~any(isnan(img))  % Camera image are available.
             % Do something
@@ -205,7 +221,7 @@ while server.status() || (counter < data_size) % Repeat while data is available
         title(ownView, 'OWN', 'FontSize', 16);
         if ~any(isnan(orientation))
             if isempty(googleView)
-                subplot(plot_size, 2, 2);
+                subplot(plot_size, 2, [2 4]);
                 % Used for visualization.
                 googleView = OrientationView('Google filter', gca);
             end
@@ -215,21 +231,23 @@ while server.status() || (counter < data_size) % Repeat while data is available
     end
     
     %%%%%%%%%%%%%%%%%%%%%% Visualize quartenion average delta %%%%%%%%%%%%%%%%%%%%
-    if orientation_type 
+    if orientation_type
         val = orientation;
     else
-        
-        val = x(1:4, 1)'; % Self-calculated orientation
+        val = x(1:4)'; % Self-calculated orientation
     end
     
     if ~any(isnan(val))
-        subplot(plot_size, 2, [3,4]);
-        if initialized == 0
+        subplot(plot_size, 2, [5 6 7 8]);
+        if activity_initialized == 0
             plot(t, 0);
-            initialized = 1;
+            xlabel('Time')
+            ylabel('Attitude delta')
+            grid on
+            activity_initialized = 1;
         end
         if counter > 0 && rem(counter, window) == 0
-            history_orient_del = meas.orient_del(end-window+1:end);       
+            history_orient_del = meas.orient_del(end-window+1:end);
             orient_del_avg = (1.0/window)*sum(history_orient_del);
             ax = gca(); % get handle of current axes;
             line = get(ax, 'Children'); % get handle to line object
@@ -245,6 +263,8 @@ while server.status() || (counter < data_size) % Repeat while data is available
             set(get(gca, 'title'), 'string', activity(argmax))
             
         end
+        % Difference between quartenions
+        % http://mars.cs.umn.edu/tr/reports/Trawny05b.pdf
         if ~any(orientation_old(:))
             del = real(2*acos(val(1)));
         else
@@ -252,22 +272,39 @@ while server.status() || (counter < data_size) % Repeat while data is available
             del = real(2*acosd(Q_del(1)));
         end
         
+        if counter > 0 && rem(counter, window/10) == 0
+            history_position = meas.Pos(:,end-1:end);
+            position_avg = mean(history_position, 2);
+            
+            set(postion_graph, {'XData'}, {[postion_graph.XData position_avg(1)]; position_avg(1)});
+            set(postion_graph, {'YData'}, {[postion_graph.YData position_avg(2)]; position_avg(2)});
+            set(postion_graph, {'ZData'}, {[postion_graph.ZData position_avg(3)]; position_avg(3)});
+        end
+        
         orientation_old = val;
         
-        if camera && (counter > 0 && rem(counter, cam_window) == 0)                       
+        if camera && (counter > 0 && rem(counter, cam_window) == 0)
             if strcmp(camera_view,'float')
                 step(video,img);
             elseif strcmp(camera_view,'integrated')
-                subplot(plot_size, 2, [5,6]);
+                subplot(plot_size, 2, [13 14 15 16]);
                 set(cam_handle,'CData', img);
                 drawnow;
             else
                 fprintf('Activated camera stream in background!\n');
             end
-            
         end
     else
         del = 0;
+    end
+    
+    % Calculate position
+    if ~any(isnan(acc))
+        acc_del = acc-Qq(x)'*acc_base;
+        if del > thershold(1)
+            vel = 1.4;
+            Pos = Pos(:,end) + 0.5*acc_del*(t-t0-prv_t)^2;
+        end
     end
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     
@@ -283,5 +320,6 @@ while server.status() || (counter < data_size) % Repeat while data is available
     meas.mag = [meas.mag, mag];
     meas.orient = [meas.orient, orientation];
     meas.orient_del = [meas.orient_del, del];
+    meas.Pos = [meas.Pos, Pos];
 end
 end
