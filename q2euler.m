@@ -24,5 +24,5 @@ function euler = q2euler(q)
 
   euler(2, :) = -asin(2*xzpwy);
 
-  euler = mod(euler+pi, 2*pi) - pi;
+  euler = mod(real(euler+pi), 2*pi) - pi;
 end

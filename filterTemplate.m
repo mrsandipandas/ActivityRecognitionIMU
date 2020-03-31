@@ -1,4 +1,8 @@
 function [xhat, meas] = filterTemplate(calAcc, calGyr, calMag)
+
+startup()
+showIP()
+
 % FILTERTEMPLATE  Filter template
 %
 % This is a template function for how to collect and filter data
@@ -20,32 +24,40 @@ function [xhat, meas] = filterTemplate(calAcc, calGyr, calMag)
 
 %% Setup necessary infrastructure
 import('se.hendeby.sensordata.*');  % Used to receive data.
-load dataset.mat
-MdlLinear = fitcdiscr(meas,tag);
-clear meas tag
-measvec_prev = [];
+
 %% Filter settings
 t0 = [];  % Initial time (initialize on first data received)
 nx = 4;
 % Add your filter settings here.
+% Samsung Note 10+ Södertälje
+Pos = [0 0 0]';
+
+acc_base = [-0.1102 0.1214 9.7468]';
+cov_acc = diag([.08438e-03 .08831e-03 2.50e-3]); % [m/s^2]
+
+cov_gyro = diag([1.669e-06 1.402e-06 1.419e-06]); % [rad/s]
+
+% mag_base = [0 sqrt(6.372^2+11.725^2) -42.427]';
+mag_base = [-11.725 6.372 -42.427]';
+mag_norm = norm(mag_base);
+cov_mag = diag([0.1389 0.10001 0.1852]);
+alpha = 0.01;
+
 window = 100; % No. of historical points for activity calulation
-orientation_del_history = zeros(window,1);
 orientation_old = [0 0 0 0]';
 activity = ["Stationary" "Walking" "Running"];
-thershold = [5e-3       20e-3];
-initialized = 0;
+thershold = [0.15          1.0];
+activity_initialized = 0;
 
 % true = Phone calculated Q, provided by android
 % false = Developed algo calculated Q
-orientation_type = true;
+orientation_type = false;
 
 % Offline settings without camera recorded data
 offline = false;
 data_size = 0;
 
-correct_cnt = 0;
-total_cnt = 0;
-%% Camera for VINS
+%% Camera for feature tracking to incorporate VINS
 try
     % Get the plugin connector from here Home->Env->Add-Ons
     % https://www.mathworks.com/matlabcentral/fileexchange/63319-android-mobile-camera-connector
@@ -53,28 +65,32 @@ try
     % true|false = Use|Stop camera
     camera = false;
     
+    % 2 = Default view
+    % 4 = Activity view
+    % 6 = 3D Position view
+    % 8 = Camera View in the main window
+    plot_size = 6;
+    
     % Show one frame per 'cam_window' frame streamed
     cam_window = 100;
-        
-    % 1 = Default view
-    % 2 = Activity view
-    % 3 = Camera View in the main window
-    plot_size = 2;
     
     % integrated = Display in one window
     % float = Display as a seperate window
     % None = No display but use camera features for calculations
-    camera_view = 'integrated';
+    camera_view = 'None';
+    
+    
     
     % Change the IP based on IP display of the Webcam app
     % https://ip-webcam.appspot.com/
     camera_url = ('http://192.168.1.215:8080/shot.jpg?rnd=350264');
     if camera
         if strcmp(camera_view,'float')
-            video=vision.VideoPlayer();  
+            video=vision.VideoPlayer();
         elseif strcmp(camera_view,'integrated')
-            plot_size = 3;
-            cam_handle = imshow(imread(camera_url), 'XData',[1 12], 'YData',[1 3], 'Parent', subplot(plot_size, 2, [5,6]));
+            plot_size = 8;
+            % 'XData',[1 12], 'YData',[1 3] Sets the size of the image
+            cam_handle = imshow(imread(camera_url), 'XData',[1 12], 'YData',[1 3], 'Parent', subplot(plot_size, 2, [13 14 15 16]));
         else
             fprintf('Activated camera stream in background!\n');
         end
@@ -83,9 +99,9 @@ try
     end
 catch e
     fprintf(['Unsuccessful connecting to IP Cam!\n' ...
-        'Make sure to start streaming from the phone *before*\n'...
-        'running this function and activate stream in background.\n'...
-        'Or, simply turn off camera usage using camera = flase flag!\n']);
+        'Make sure to start streaming from the phone *before* running this function. \n'...
+        'If needed please activate stream in background and also check for the correct *IP*.\n'...
+        'Or, simply turn off camera usage using *camera = false* flag!\n']);
     return;
 end
 %% Current filter state.
@@ -93,15 +109,17 @@ x = [1; 0; 0 ;0];
 P = eye(nx, nx);
 
 %% Saved filter states.
-xhat = struct('t', zeros(1, 0),...
+xhat = struct('t', zeros(nx, 0),...
     'x', zeros(nx, 0),...
     'P', zeros(nx, nx, 0));
 
 meas = struct('t', zeros(1, 0),...
-    'acc', zeros(3, 0),...
-    'gyr', zeros(3, 0),...
-    'mag', zeros(3, 0),...
-    'orient', zeros(4, 0));
+    'acc', zeros(3, 1),...
+    'gyr', zeros(3, 1),...
+    'mag', zeros(3, 1),...
+    'orient', zeros(4, 1),...
+    'orient_del', zeros(1, 0),...
+    'Pos', zeros(3, 1));
 
 try
     %% Create data link
@@ -121,14 +139,23 @@ catch e
     return;
 end
 
+
 % Used for visualization.
 figure(1);
-subplot(plot_size, 2, 1);
+subplot(plot_size, 2, [9 10 11 12]);
+postion_graph = plot3(Pos(1), Pos(2), Pos(3),'-b', Pos(1), Pos(2), Pos(3), '-or','MarkerSize',10,'MarkerFaceColor','r');
+% xlim([-2 2])
+% ylim([-2 2])
+% zlim([-2 2])
+xlabel('Position X')
+ylabel('Position Y')
+zlabel('Position Z')
+grid on
+
+subplot(plot_size, 2, [1 3]);
 ownView = OrientationView('Own filter', gca);  % Used for visualization.
 googleView = [];
 counter = 0;  % Used to throttle the displayed frame rate.
-
-meas_struct = [];
 
 %% Filter loop
 while server.status() || (counter < data_size) % Repeat while data is available
@@ -149,25 +176,37 @@ while server.status() || (counter < data_size) % Repeat while data is available
     if isempty(t0)  % Initialize t0
         t0 = t;
     end
-    
+    if ~size(meas.t,2)
+        prv_t = 0;
+    else
+        prv_t = meas.t(:,end);
+    end
     gyr = data(1, 5:7)';
     if ~any(isnan(gyr))  % Gyro measurements are available.
-        % Do something
+        [x, P] = update_gyro(x, P, t-t0-prv_t, cov_gyro^2*eye(3), gyr);
+    else
+        [x, P] = update_gyro(x, P, t-t0-prv_t, cov_gyro^2*eye(3));
     end
     
     acc = data(1, 2:4)';
     if ~any(isnan(acc))  % Acc measurements are available.
-        % Do something
+        if  norm(acc)<9.81*1.6 && norm(acc)>9.81*0.8
+            [x, P] = update_acc(x, P, acc, cov_acc, acc_base); % Update state estimate
+        end
     end
     
     mag = data(1, 8:10)';
     if ~any(isnan(mag))  % Mag measurements are available.
-        % Do something
+        % AR-filter to account for that the magnitude of m0 might drift
+        mag_norm = (1-alpha)*mag_norm + alpha*norm(mag);
+        
+        % If magnitude of measurement is too large, skip update step
+        if 32<mag_norm && mag_norm<56 % Thresholds for magnetic field
+            [x, P] = update_mag(x, P, mag, mag_base, cov_mag); % Update state estimate
+        end
     end
     
-
-    
-    if camera && (counter > 0 && rem(counter, cam_window) == 0) 
+    if camera && (counter > 0 && rem(counter, cam_window) == 0)
         img = imread(camera_url);
         if ~any(isnan(img))  % Camera image are available.
             % Do something
@@ -175,12 +214,6 @@ while server.status() || (counter < data_size) % Repeat while data is available
     end
     
     orientation = data(1, 18:21)';  % Google's orientation estimate.
-    if isempty(measvec_prev)
-        measvec = [t, orientation', acc', gyr'];;
-    end
-    % Store data in .mat
-    measvec_prev = measvec;
-    measvec = [t, orientation', acc', gyr'];
     
     % Visualize result
     if rem(counter, 10) == 0
@@ -188,7 +221,7 @@ while server.status() || (counter < data_size) % Repeat while data is available
         title(ownView, 'OWN', 'FontSize', 16);
         if ~any(isnan(orientation))
             if isempty(googleView)
-                subplot(plot_size, 2, 2);
+                subplot(plot_size, 2, [2 4]);
                 % Used for visualization.
                 googleView = OrientationView('Google filter', gca);
             end
@@ -201,84 +234,92 @@ while server.status() || (counter < data_size) % Repeat while data is available
     if orientation_type
         val = orientation;
     else
-        val = x(1:4)';
+        val = x(1:4)'; % Self-calculated orientation
     end
     
     if ~any(isnan(val))
-        subplot(plot_size, 2, [3,4]);
-        if initialized == 0
+        subplot(plot_size, 2, [5 6 7 8]);
+        if activity_initialized == 0
             plot(t, 0);
-            initialized = 1;
+            xlabel('Time')
+            ylabel('Attitude delta')
+            grid on
+            activity_initialized = 1;
         end
         if counter > 0 && rem(counter, window) == 0
-            del_avg = (1.0/window)*sum(orientation_del_history);
+            history_orient_del = meas.orient_del(end-window+1:end);
+            orient_del_avg = (1.0/window)*sum(history_orient_del);
             ax = gca(); % get handle of current axes;
             line = get(ax, 'Children'); % get handle to line object
             line.XData = [line.XData t];
-            line.YData = [line.YData del_avg];
+            line.YData = [line.YData orient_del_avg];
             
             % Majority voting
-%             stationary = sum(orientation_del_history <= thershold(1));
-%             walk = sum(orientation_del_history > thershold(1) & orientation_del_history < thershold(2));
-%             run = window - (stationary + walk);
-%             category = [stationary walk run];
-%             [~, argmax] = max(category);
-            
-            if isnan(measvec)*ones(11,1) == 0
-                % Get time delta
-                t_before = measvec_prev(1);
-                t_curr = measvec(1);
-                dt = t_curr - t_before;
-
-                % Get lin. velocity 
-                accel_before = measvec_prev(6:8);
-                accel_curr = measvec(6:8);
-                lin_vel = (accel_curr - accel_before)/dt;
-
-                % Get current data 
-                q = measvec(2:5);
-                gyro = measvec(9:11);
-
-                % Build proc data
-                proc_data_vec = [q, lin_vel, gyro, accel_curr];
-                currAct = predict(MdlLinear, proc_data_vec);
-                if strcmp(currAct{1},'walking')
-                    correct_cnt = correct_cnt+1;
-                end
-                set(get(gca, 'title'), 'string', currAct{1})
-                total_cnt = total_cnt + 1;
-                fprintf('Total count: %d  - Correct count: %d \n',total_cnt, correct_cnt);
-            end
+            stationary = sum(history_orient_del <= thershold(1));
+            walk = sum(history_orient_del > thershold(1) & history_orient_del < thershold(2));
+            run = window - (stationary + walk);
+            category = [stationary walk run];
+            [~, argmax] = max(category);
+            set(get(gca, 'title'), 'string', activity(argmax))
             
         end
-        del = 2*acos(abs(dot(orientation_old,val)));
-        orientation_old = val;
-        orientation_del_history(1+rem(counter, window)) = real(del);
+        % Difference between quartenions
+        % http://mars.cs.umn.edu/tr/reports/Trawny05b.pdf
+        if ~any(orientation_old(:))
+            del = real(2*acos(val(1)));
+        else
+            Q_del = quatmultiply(quatconj(val), orientation_old);
+            del = real(2*acosd(Q_del(1)));
+        end
         
-        if camera && (counter > 0 && rem(counter, cam_window) == 0)                       
+        if counter > 0 && rem(counter, window/10) == 0
+            history_position = meas.Pos(:,end-1:end);
+            position_avg = mean(history_position, 2);
+            
+            set(postion_graph, {'XData'}, {[postion_graph.XData position_avg(1)]; position_avg(1)});
+            set(postion_graph, {'YData'}, {[postion_graph.YData position_avg(2)]; position_avg(2)});
+            set(postion_graph, {'ZData'}, {[postion_graph.ZData position_avg(3)]; position_avg(3)});
+        end
+        
+        orientation_old = val;
+        
+        if camera && (counter > 0 && rem(counter, cam_window) == 0)
             if strcmp(camera_view,'float')
                 step(video,img);
             elseif strcmp(camera_view,'integrated')
-                subplot(plot_size, 2, [5,6]);
+                subplot(plot_size, 2, [13 14 15 16]);
                 set(cam_handle,'CData', img);
                 drawnow;
             else
                 fprintf('Activated camera stream in background!\n');
             end
         end
+    else
+        del = 0;
+    end
+    
+    % Calculate position
+    if ~any(isnan(acc))
+        acc_del = acc-Qq(x)'*acc_base;
+        if del > thershold(1)
+            vel = 1.4;
+            Pos = Pos(:,end) + 0.5*acc_del*(t-t0-prv_t)^2;
+        end
     end
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     
     counter = counter + 1;
     % Save estimates
-    xhat.x(:, end+1) = x;
-    xhat.P(:, :, end+1) = P;
-    xhat.t(end+1) = t - t0;
+    xhat.x = [xhat.x, x];
+    xhat.P = cat(3,xhat.P, P);
+    xhat.t = [xhat.t, (t-t0)];
     
-    meas.t(end+1) = t - t0;
-    meas.acc(:, end+1) = acc;
-    meas.gyr(:, end+1) = gyr;
-    meas.mag(:, end+1) = mag;
-    meas.orient(:, end+1) = orientation;
+    meas.t = [meas.t, (t-t0)];
+    meas.acc = [meas.acc, acc];
+    meas.gyr = [meas.gyr, gyr];
+    meas.mag = [meas.mag, mag];
+    meas.orient = [meas.orient, orientation];
+    meas.orient_del = [meas.orient_del, del];
+    meas.Pos = [meas.Pos, Pos];
 end
 end
