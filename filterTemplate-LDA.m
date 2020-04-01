@@ -233,7 +233,7 @@ while server.status() || (counter < data_size) % Repeat while data is available
                 % Get lin. velocity 
                 accel_before = measvec_prev(6:8);
                 accel_curr = measvec(6:8);
-                lin_vel = (accel_curr - accel_before)/dt;
+                lin_vel = (accel_curr - accel_before)*dt;
 
                 % Get current data 
                 q = measvec(2:5);
@@ -242,7 +242,7 @@ while server.status() || (counter < data_size) % Repeat while data is available
                 % Build proc data
                 proc_data_vec = [q, lin_vel, gyro, accel_curr];
                 currAct = predict(MdlLinear, proc_data_vec);
-                if strcmp(currAct{1},'walking')
+                if strcmp(currAct{1},'sitted')
                     correct_cnt = correct_cnt+1;
                 end
                 set(get(gca, 'title'), 'string', currAct{1})

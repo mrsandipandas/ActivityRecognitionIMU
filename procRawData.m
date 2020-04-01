@@ -1,4 +1,4 @@
-filename = 'walking';
+filename = 'sitted';
 ld_file = [filename,'.mat'];
 load(filename)
 proc_data = [];
@@ -15,7 +15,7 @@ for i=2:size(meas_struct,1)
        % Get lin. velocity 
        accel_before = meas_struct(i-1,6:8);
        accel_curr = meas_struct(i,6:8);
-       lin_vel = (accel_curr - accel_before)/dt;
+       lin_vel = (accel_curr - accel_before)*dt;
        
        % Get current data 
        q = meas_struct(i,2:5);
