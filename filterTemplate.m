@@ -48,13 +48,14 @@ orientation_old = [0 0 0 0]';
 activity = ["Stationary" "Walking" "Running"];
 thershold = [0.15          1.0];
 activity_initialized = 0;
+img_initialized = 0;
 
 % true = Phone calculated Q, provided by android
 % false = Developed algo calculated Q
 orientation_type = false;
 
 % Offline settings without camera recorded data
-offline = false;
+offline = true;
 data_size = 0;
 
 %% Camera for feature tracking to incorporate VINS
@@ -83,7 +84,7 @@ try
     
     % Change the IP based on IP display of the Webcam app
     % https://ip-webcam.appspot.com/
-    camera_url = ('http://192.168.1.215:8080/shot.jpg?rnd=350264');
+    camera_url = ('http://192.168.1.179:8080/shot.jpg?rnd=350264');
     if camera
         if strcmp(camera_view,'float')
             video=vision.VideoPlayer();
@@ -119,7 +120,8 @@ meas = struct('t', zeros(1, 0),...
     'mag', zeros(3, 1),...
     'orient', zeros(4, 1),...
     'orient_del', zeros(1, 0),...
-    'Pos', zeros(3, 1));
+    'Pos', zeros(3, 1),...
+    'img', zeros(1080, 1920, 3));
 
 try
     %% Create data link
@@ -197,7 +199,7 @@ while server.status() || (counter < data_size) % Repeat while data is available
     
     mag = data(1, 8:10)';
     if ~any(isnan(mag))  % Mag measurements are available.
-        % AR-filter to account for that the magnitude of m0 might drift
+        % Low pass-filter to account for that the magnitude of m0 might drift
         mag_norm = (1-alpha)*mag_norm + alpha*norm(mag);
         
         % If magnitude of measurement is too large, skip update step
@@ -206,7 +208,7 @@ while server.status() || (counter < data_size) % Repeat while data is available
         end
     end
     
-    if camera && (counter > 0 && rem(counter, cam_window) == 0)
+    if camera  && (counter > 0 && rem(counter, cam_window) == 0)
         img = imread(camera_url);
         if ~any(isnan(img))  % Camera image are available.
             % Do something
@@ -284,14 +286,42 @@ while server.status() || (counter < data_size) % Repeat while data is available
         orientation_old = val;
         
         if camera && (counter > 0 && rem(counter, cam_window) == 0)
-            if strcmp(camera_view,'float')
-                step(video,img);
-            elseif strcmp(camera_view,'integrated')
-                subplot(plot_size, 2, [13 14 15 16]);
-                set(cam_handle,'CData', img);
-                drawnow;
+            if img_initialized
+                
+                try
+                    tic
+                    corners = detectFASTFeatures(rgb2gray(meas.img));
+                    img_corners = insertMarker(meas.img, corners.selectStrongest(100).Location, '+','color','green','size',10);
+                    
+                    tracker = vision.PointTracker('MaxBidirectionalError', 3, 'NumPyramidLevels', 5);
+                    initialize(tracker, corners.Location, meas.img);
+                    
+                    [new_corners, validIdx] = step(tracker, img);
+                    matchedPoints1 = corners.Location(validIdx, :);
+                    matchedPoints2 = new_corners(validIdx, :);
+                    
+                    % tform =  estimateGeometricTransform(matchedPoints2,matchedPoints1,'similarity')
+                    tform = fitgeotrans(matchedPoints2,matchedPoints1,'nonreflectivesimilarity')
+                    
+                    toc
+                    if strcmp(camera_view,'float')
+                        step(video,img_corners);
+                    elseif strcmp(camera_view,'integrated')
+                        subplot(plot_size, 2, [13 14 15 16]);
+                        set(cam_handle,'CData', img_corners);
+                        drawnow;
+                    else
+                        fprintf('Activated camera stream in background!\n');
+                    end
+                catch e
+                    fprintf(['No transformations\n']);
+                    meas.img = img;
+                end
+                
+                
             else
-                fprintf('Activated camera stream in background!\n');
+                meas.img = img;
+                img_initialized = 1;
             end
         end
     else
